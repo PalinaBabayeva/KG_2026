@@ -6,13 +6,10 @@ class ColorModelApp:
 
   def __init__(self, root):
     self.root = root
-    self.root.title(
-        'Цветовые модели (CMYK - RGB - HSV)'
-    )
+    self.root.title('Цветовые модели (CMYK - RGB - HSV)')
     self.root.geometry('920x680')
     self.root.minsize(850, 620)
 
-    #Базовый цвет RGB
     self.r = 79
     self.g = 70
     self.b = 229
@@ -26,7 +23,6 @@ class ColorModelApp:
     main_frame = tk.Frame(self.root, padx=15, pady=15)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
-    #Способ заданиячерез графическую палитру
     preview_frame = tk.LabelFrame(
         main_frame, text='Выбор и просмотр цвета', padx=10, pady=10
     )
@@ -36,18 +32,15 @@ class ColorModelApp:
     self.color_canvas.pack(fill=tk.X, pady=5)
 
     btn_palette = tk.Button(
-      
         preview_frame,
         text='Color Picker',
         command=self.open_color_picker,
         bg='#e0e7ff',
         font=('Segoe UI', 10, 'bold'),
         cursor='hand2',
-
     )
     btn_palette.pack(pady=5)
 
-    # Контейнер для трех цветовых моделей
     models_frame = tk.Frame(main_frame)
     models_frame.pack(fill=tk.BOTH, expand=True, pady=10)
 
@@ -56,7 +49,6 @@ class ColorModelApp:
     models_frame.columnconfigure(2, weight=1)
     models_frame.rowconfigure(0, weight=1)
 
-    # --- Модель RGB ---
     rgb_frame = tk.LabelFrame(
         models_frame,
         text='Модель RGB',
@@ -93,12 +85,8 @@ class ColorModelApp:
 
       entry = tk.Entry(row_f, width=5, font=('Segoe UI', 10))
       entry.pack(side=tk.RIGHT)
-      entry.bind(
-          '<Return>', lambda e, c=ch: self.on_rgb_entry_submit(c)
-      )
-      entry.bind(
-          '<FocusOut>', lambda e, c=ch: self.on_rgb_entry_submit(c)
-      )
+      entry.bind('<Return>', lambda e, c=ch: self.on_rgb_entry_submit(c))
+      entry.bind('<FocusOut>', lambda e, c=ch: self.on_rgb_entry_submit(c))
       self.rgb_entries[ch] = entry
 
     cmyk_frame = tk.LabelFrame(
@@ -143,7 +131,6 @@ class ColorModelApp:
       entry.bind('<FocusOut>', lambda e, c=ch: self.on_cmyk_entry_submit(c))
       self.cmyk_entries[ch] = entry
 
-    #HSV
     hsv_frame = tk.LabelFrame(
         models_frame,
         text='Модель HSV',
@@ -189,7 +176,6 @@ class ColorModelApp:
       entry.bind('<FocusOut>', lambda e, c=ch: self.on_hsv_entry_submit(c))
       self.hsv_entries[ch] = entry
 
-  # Конвертация
   def rgb_to_cmyk_calc(self, r, g, b):
     rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
     k = 1.0 - max(rf, gf, bf)
@@ -233,6 +219,7 @@ class ColorModelApp:
     return round(h), round(s * 100), round(v * 100)
 
   def hsv_to_rgb_calc(self, h, s, v):
+    h = h % 360
     sf, vf = s / 100.0, v / 100.0
     c = vf * sf
     x = c * (1 - abs((h / 60) % 2 - 1))
@@ -248,7 +235,7 @@ class ColorModelApp:
       rf, gf, bf = 0, x, c
     elif 240 <= h < 300:
       rf, gf, bf = x, 0, c
-    elif 300 <= h < 360:
+    elif 300 <= h <= 360:
       rf, gf, bf = c, 0, x
     return (
         round((rf + m) * 255),
@@ -271,18 +258,15 @@ class ColorModelApp:
       self.rgb_entries[ch].delete(0, tk.END)
       self.rgb_entries[ch].insert(0, str(val))
 
-    # Пересчет в CMYK и HSV
     c, m, y, k = self.rgb_to_cmyk_calc(self.r, self.g, self.b)
     h, s, v = self.rgb_to_hsv_calc(self.r, self.g, self.b)
 
-    # Обновление CMYK
     for ch, val in zip(['C', 'M', 'Y', 'K'], [c, m, y, k]):
       if update_sliders:
         self.cmyk_vars[ch].set(val)
       self.cmyk_entries[ch].delete(0, tk.END)
       self.cmyk_entries[ch].insert(0, str(val))
 
-    # Обновление HSV
     for ch, val in zip(['H', 'S', 'V'], [h, s, v]):
       if update_sliders:
         self.hsv_vars[ch].set(val)
@@ -300,7 +284,7 @@ class ColorModelApp:
     self.r = self.rgb_vars['R'].get()
     self.g = self.rgb_vars['G'].get()
     self.b = self.rgb_vars['B'].get()
-    self.update_all_from_rgb(update_sliders=False)
+    self.update_all_from_rgb(update_sliders=True)
 
   def on_cmyk_slider(self, ch, val):
     if self.is_updating:
@@ -310,7 +294,7 @@ class ColorModelApp:
     y = self.cmyk_vars['Y'].get()
     k = self.cmyk_vars['K'].get()
     self.r, self.g, self.b = self.cmyk_to_rgb_calc(c, m, y, k)
-    self.update_all_from_rgb(update_sliders=False)
+    self.update_all_from_rgb(update_sliders=True)
 
   def on_hsv_slider(self, ch, val):
     if self.is_updating:
@@ -319,39 +303,52 @@ class ColorModelApp:
     s = self.hsv_vars['S'].get()
     v = self.hsv_vars['V'].get()
     self.r, self.g, self.b = self.hsv_to_rgb_calc(h, s, v)
-    self.update_all_from_rgb(update_sliders=False)
+    self.update_all_from_rgb(update_sliders=True)
 
-  # Обработчики текстовых полей
   def on_rgb_entry_submit(self, ch):
     try:
       val = int(self.rgb_entries[ch].get())
+      val = max(0, min(255, val))
       setattr(self, ch.lower(), val)
       self.update_all_from_rgb(update_sliders=True)
     except ValueError:
-      pass
+      current_val = getattr(self, ch.lower())
+      self.rgb_entries[ch].delete(0, tk.END)
+      self.rgb_entries[ch].insert(0, str(current_val))
 
   def on_cmyk_entry_submit(self, ch):
     try:
-      c = int(self.cmyk_entries['C'].get())
-      m = int(self.cmyk_entries['M'].get())
-      y = int(self.cmyk_entries['Y'].get())
-      k = int(self.cmyk_entries['K'].get())
+      c = max(0, min(100, int(self.cmyk_entries['C'].get())))
+      m = max(0, min(100, int(self.cmyk_entries['M'].get())))
+      y = max(0, min(100, int(self.cmyk_entries['Y'].get())))
+      k = max(0, min(100, int(self.cmyk_entries['K'].get())))
+
       self.r, self.g, self.b = self.cmyk_to_rgb_calc(c, m, y, k)
       self.update_all_from_rgb(update_sliders=True)
     except ValueError:
-      pass
+      c_val, m_val, y_val, k_val = self.rgb_to_cmyk_calc(
+          self.r, self.g, self.b
+      )
+      for channel, val in zip(
+          ['C', 'M', 'Y', 'K'], [c_val, m_val, y_val, k_val]
+      ):
+        self.cmyk_entries[channel].delete(0, tk.END)
+        self.cmyk_entries[channel].insert(0, str(val))
 
   def on_hsv_entry_submit(self, ch):
     try:
-      h = int(self.hsv_entries['H'].get())
-      s = int(self.hsv_entries['S'].get())
-      v = int(self.hsv_entries['V'].get())
+      h = max(0, min(360, int(self.hsv_entries['H'].get())))
+      s = max(0, min(100, int(self.hsv_entries['S'].get())))
+      v = max(0, min(100, int(self.hsv_entries['V'].get())))
+
       self.r, self.g, self.b = self.hsv_to_rgb_calc(h, s, v)
       self.update_all_from_rgb(update_sliders=True)
     except ValueError:
-      pass
+      h_val, s_val, v_val = self.rgb_to_hsv_calc(self.r, self.g, self.b)
+      for channel, val in zip(['H', 'S', 'V'], [h_val, s_val, v_val]):
+        self.hsv_entries[channel].delete(0, tk.END)
+        self.hsv_entries[channel].insert(0, str(val))
 
-  #Выбор цвета через системную палитру
   def open_color_picker(self):
     color_code = colorchooser.askcolor(
         title='Выберите цвет',
@@ -366,4 +363,7 @@ class ColorModelApp:
 if __name__ == '__main__':
   root = tk.Tk()
   app = ColorModelApp(root)
-  root.mainloop()
+  try:
+    root.mainloop()
+  except KeyboardInterrupt:
+    pass
