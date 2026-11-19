@@ -10,7 +10,7 @@ class Lab2App:
 
   def __init__(self, root):
     self.root = root
-    self.root.title('Обработка и сегментация изображений')
+    self.root.title('Обработка и изображений и поэлементные операции')
     self.root.geometry('1500x950')
     self.root.minsize(1200, 800)
 
@@ -76,38 +76,40 @@ class Lab2App:
     ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(
         fill=tk.X, pady=14
     )
-
     ttk.Label(
-        control_frame, text='Сегментация', style='Heading.TLabel'
+      control_frame, text='Поэлементные операции', style='Heading.TLabel'
     ).pack(anchor='w', pady=(0, 6))
-    self.seg_var = tk.StringVar(value='sobel')
+    self.point_var = tk.StringVar(value='invert')
     ttk.Radiobutton(
-        control_frame,
-        text='Перепады (Собель)',
-        variable=self.seg_var,
-        value='sobel',
-    ).pack(anchor='w', pady=3)
+      control_frame,
+      text='Инверсия яркости',
+      variable=self.point_var,
+      value='invert',
+    ).pack(anchor='w', pady=2)
     ttk.Radiobutton(
-        control_frame,
-        text='Линии (Лапласиан)',
-        variable=self.seg_var,
-        value='laplacian',
-    ).pack(anchor='w', pady=3)
-    ttk.Radiobutton(
-        control_frame,
-        text='Точки',
-        variable=self.seg_var,
-        value='points',
-    ).pack(anchor='w', pady=3)
-    ttk.Radiobutton(
-        control_frame,
-        text='Границы (Кэнни)',
-        variable=self.seg_var,
-        value='canny',
-    ).pack(anchor='w', pady=3)
-    ttk.Button(control_frame, text='Выполнить', command=self.run_part2).pack(
-        fill=tk.X, pady=(6, 12)
+      control_frame,
+      text='Гамма-коррекция',
+      variable=self.point_var,
+      value='gamma',
+    ).pack(anchor='w', pady=2)
+
+    ttk.Label(control_frame, text='Параметр гамма (γ):').pack(
+      anchor='w', pady=(6, 0)
     )
+    self.gamma_var = tk.DoubleVar(value=1.0)
+    gamma_scale = tk.Scale(
+      control_frame,
+      from_=0.1,
+      to=5.0,
+      resolution=0.1,
+      orient=tk.HORIZONTAL,
+      variable=self.gamma_var,
+    )
+    gamma_scale.pack(fill=tk.X, pady=(0, 6))
+
+    ttk.Button(
+      control_frame, text='Выполнить', command=self.run_pointwise
+    ).pack(fill=tk.X, pady=(4, 4))
 
     ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(
         fill=tk.X, pady=14
@@ -227,41 +229,28 @@ class Lab2App:
 
     self.update_display()
 
-  def run_part2(self):
-    if self.image_original is None:
-      return
+  def run_pointwise(self):
+      if self.image_original is None:
+        return
 
-    method = self.seg_var.get()
-    gray = (
-        cv2.cvtColor(self.image_original, cv2.COLOR_RGB2GRAY)
-        if len(self.image_original.shape) == 3
-        else self.image_original
-    )
+      op = self.point_var.get()
+      img = self.image_original.copy()
 
-    if method == 'sobel':
-      grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-      grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-      abs_grad_x = cv2.convertScaleAbs(grad_x)
-      abs_grad_y = cv2.convertScaleAbs(grad_y)
-      sobel = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
-      self.image_processed = cv2.cvtColor(sobel, cv2.COLOR_GRAY2RGB)
+      if op == 'invert':
+        self.image_processed = 255 - img
 
-    elif method == 'laplacian':
-      lap = cv2.Laplacian(gray, cv2.CV_64F, ksize=3)
-      abs_lap = cv2.convertScaleAbs(lap)
-      self.image_processed = cv2.cvtColor(abs_lap, cv2.COLOR_GRAY2RGB)
+      elif op == 'gamma':
+        gamma = self.gamma_var.get()
+        if gamma <= 0:
+          gamma = 1.0
+        inv_gamma = 1.0 / gamma
+        lut = np.array(
+            [((i / 255.0) ** inv_gamma) * 255 for i in range(256)],
+            dtype=np.uint8,
+        )
+        self.image_processed = cv2.LUT(img, lut)
 
-    elif method == 'points':
-      kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
-      filtered = cv2.filter2D(gray, cv2.CV_32F, kernel)
-      filtered = cv2.convertScaleAbs(filtered)
-      self.image_processed = cv2.cvtColor(filtered, cv2.COLOR_GRAY2RGB)
-
-    elif method == 'canny':
-      edges = cv2.Canny(gray, 100, 200)
-      self.image_processed = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
-
-    self.update_display()
+      self.update_display()
 
   def show_histogram_window(self):
     if self.image_original is None:

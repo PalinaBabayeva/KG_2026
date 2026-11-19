@@ -17,6 +17,7 @@ COLORS = {
     "ЦДА": "#16845b",
     "Брезенхем": "#2563b9",
     "Брезенхем (окружность)": "#7c3aed",
+    "Кастл — Питвей": "#e11d48",
 }
 
 
@@ -67,6 +68,29 @@ def raster_dda(x0, y0, x1, y1):
     points[-1] = (x1, y1)
     return points
 
+def raster_castle_pitway(x0, y0, x1, y1, x2, y2):
+  dx1 = x1 - x0
+  dy1 = y1 - y0
+  dx2 = x2 - x0
+  dy2 = y2 - y0
+
+  span = max(abs(dx1), abs(dy1), abs(dx2), abs(dy2))
+  steps = max(1, span * 2)
+
+  points = []
+  prev = None
+  for i in range(steps + 1):
+    t = i / float(steps)
+    inv_t = 1.0 - t
+    wx = inv_t * inv_t * 0.0 + 2.0 * inv_t * t * dx1 + t * t * dx2
+    wy = inv_t * inv_t * 0.0 + 2.0 * inv_t * t * dy1 + t * t * dy2
+    px = x0 + round_half_away(wx)
+    py = y0 + round_half_away(wy)
+    pt = (px, py)
+    if pt != prev:
+      points.append(pt)
+      prev = pt
+  return points
 
 def raster_bresenham(x0, y0, x1, y1):
     reverse = (x0, y0) > (x1, y1)
@@ -152,6 +176,54 @@ def parse_integer(value, field_name, minimum, maximum):
 
 
 class RasterLabApp(object):
+    def _screen_to_world(self, px, py):
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        left, right, top, bottom = 48.0, width - 18.0, 16.0, height - 38.0
+        center_x = (left + right) / 2.0
+        center_y = (top + bottom) / 2.0
+        wx = self.view_x + (px - center_x) / self.zoom
+        wy = self.view_y - (py - center_y) / self.zoom
+        return wx, wy
+
+    def _start_freehand(self, event):
+        if not self.freehand_enabled.get():
+            return
+        pt = self._screen_to_world(event.x, event.y)
+        self.freehand_raw = [pt]
+        self.freehand_smooth = [pt]
+        self.freehand_drawing = True
+        self.redraw()
+
+    def _draw_freehand(self, event):
+        if not self.freehand_drawing or not self.freehand_enabled.get():
+            return
+        pt = self._screen_to_world(event.x, event.y)
+        self.freehand_raw.append(pt)
+        window = 5
+        recent = self.freehand_raw[-window:]
+        sx_val = sum(p[0] for p in recent) / float(len(recent))
+        sy_val = sum(p[1] for p in recent) / float(len(recent))
+        self.freehand_smooth.append((sx_val, sy_val))
+        self.redraw()
+
+    def _end_freehand(self, event):
+        self.freehand_drawing = False
+
+    def _draw_freehand_line(self, sx, sy):
+        if len(self.freehand_smooth) < 2:
+            return
+        coords = []
+        for wx, wy in self.freehand_smooth:
+            coords.extend((sx(wx), sy(wy)))
+        self.canvas.create_line(
+            *coords,
+            fill="#dc2626",
+            width=2.5,
+            smooth=True,
+            splinesteps=12,
+        )
+
     def __init__(self, root):
         self.root = root
         self.root.title(APP_TITLE)
@@ -173,6 +245,14 @@ class RasterLabApp(object):
             "cy": tk.StringVar(value="0"),
             "r": tk.StringVar(value="5"),
         }
+        self.curve_values = {
+            "x0": tk.StringVar(value="0"),
+            "y0": tk.StringVar(value="0"),
+            "x1": tk.StringVar(value="4"),
+            "y1": tk.StringVar(value="8"),
+            "x2": tk.StringVar(value="8"),
+            "y2": tk.StringVar(value="0"),
+        }
         self.zoom = 28.0
         self.view_x = 0.0
         self.view_y = 0.0
@@ -181,6 +261,11 @@ class RasterLabApp(object):
         self.current_data = None
         self.drag_origin = None
         self.canvas_geometry = None
+
+        self.freehand_enabled = tk.BooleanVar(value=False)
+        self.freehand_raw = []
+        self.freehand_smooth = []
+        self.freehand_drawing = False
 
         self._build_style()
         self._build_layout()
@@ -239,6 +324,13 @@ class RasterLabApp(object):
 
         mode_frame = ttk.LabelFrame(self.panel, text="Режим", style="Section.TLabelframe", padding=8)
         mode_frame.pack(fill=tk.X, pady=(0, 9))
+        ttk.Radiobutton(
+            mode_frame,
+            text="Кривая (Кастл — Питвей)",
+            variable=self.mode,
+            value="curve",
+            command=self._set_mode_widgets,
+        ).pack(anchor="w")
         ttk.Radiobutton(mode_frame, text="Отрезок", variable=self.mode, value="line", command=self._set_mode_widgets).pack(anchor="w")
         ttk.Radiobutton(mode_frame, text="Окружность", variable=self.mode, value="circle", command=self._set_mode_widgets).pack(anchor="w")
 
@@ -261,6 +353,30 @@ class RasterLabApp(object):
         self._add_entry(self.circle_frame, "Центр x", self.circle_values["cx"], 0, 0)
         self._add_entry(self.circle_frame, "Центр y", self.circle_values["cy"], 0, 1)
         self._add_entry(self.circle_frame, "Радиус", self.circle_values["r"], 1, 0)
+        self.curve_frame = ttk.LabelFrame(
+            self.fields_container,
+            text="Опорные точки кривой",
+            style="Section.TLabelframe",
+            padding=8,
+        )
+        self._add_entry(
+            self.curve_frame, "P0 x", self.curve_values["x0"], 0, 0
+        )
+        self._add_entry(
+            self.curve_frame, "P0 y", self.curve_values["y0"], 0, 1
+        )
+        self._add_entry(
+            self.curve_frame, "P1 x", self.curve_values["x1"], 1, 0
+        )
+        self._add_entry(
+            self.curve_frame, "P1 y", self.curve_values["y1"], 1, 1
+        )
+        self._add_entry(
+            self.curve_frame, "P2 x", self.curve_values["x2"], 2, 0
+        )
+        self._add_entry(
+            self.curve_frame, "P2 y", self.curve_values["y2"], 2, 1
+        )
 
         action_frame = ttk.Frame(self.panel, style="Panel.TFrame")
         action_frame.pack(fill=tk.X, pady=(0, 10))
@@ -309,10 +425,14 @@ class RasterLabApp(object):
         self.canvas.bind("<MouseWheel>", self._mousewheel)
         self.canvas.bind("<Button-4>", lambda event: self._mousewheel_step(event, 1))
         self.canvas.bind("<Button-5>", lambda event: self._mousewheel_step(event, -1))
+        self.canvas.bind("<ButtonPress-3>", self._start_freehand)
+        self.canvas.bind("<B3-Motion>", self._draw_freehand)
+        self.canvas.bind("<ButtonRelease-3>", self._end_freehand)
 
         self.footer_var = tk.StringVar(value="Координаты задают центры ячеек; границы: ±0,5.")
         footer = ttk.Label(self.workspace, textvariable=self.footer_var, style="Panel.TLabel", anchor="w")
         footer.grid(row=3, column=0, sticky="ew", pady=(7, 0))
+
 
     def _add_entry(self, parent, label, variable, row, column):
         cell = ttk.Frame(parent, style="Panel.TFrame")
@@ -325,32 +445,76 @@ class RasterLabApp(object):
 
     def _set_mode_widgets(self):
         mode = self.mode.get()
+        self.line_frame.pack_forget()
+        self.circle_frame.pack_forget()
+        self.curve_frame.pack_forget()
+
         if mode == "line":
-            self.circle_frame.pack_forget()
             self.line_frame.pack(fill=tk.X)
-            self.algo_combo.configure(values=LINE_ALGORITHMS + (ALL_ALGORITHMS,))
+            self.algo_combo.configure(
+                values=LINE_ALGORITHMS + (ALL_ALGORITHMS,)
+            )
             if self.algorithm.get() not in LINE_ALGORITHMS + (ALL_ALGORITHMS,):
                 self.algorithm.set("Брезенхем")
-        else:
-            self.line_frame.pack_forget()
+        elif mode == "circle":
             self.circle_frame.pack(fill=tk.X)
             self.algo_combo.configure(values=("Брезенхем (окружность)",))
             self.algorithm.set("Брезенхем (окружность)")
+        elif mode == "curve":
+            self.curve_frame.pack(fill=tk.X)
+            self.algo_combo.configure(values=("Кастл — Питвей",))
+            self.algorithm.set("Кастл — Питвей")
+
         self.draw_current(fit=True, show_errors=False)
 
     def _algorithm_changed(self, event=None):
         self.draw_current(fit=True, show_errors=False)
 
     def _read_data(self):
-        if self.mode.get() == "line":
-            x0 = parse_integer(self.line_values["x0"].get(), "A x", -COORD_LIMIT, COORD_LIMIT)
-            y0 = parse_integer(self.line_values["y0"].get(), "A y", -COORD_LIMIT, COORD_LIMIT)
-            x1 = parse_integer(self.line_values["x1"].get(), "B x", -COORD_LIMIT, COORD_LIMIT)
-            y1 = parse_integer(self.line_values["y1"].get(), "B y", -COORD_LIMIT, COORD_LIMIT)
+        mode = self.mode.get()
+        if mode == "line":
+            x0 = parse_integer(
+                self.line_values["x0"].get(), "A x", -COORD_LIMIT, COORD_LIMIT
+            )
+            y0 = parse_integer(
+                self.line_values["y0"].get(), "A y", -COORD_LIMIT, COORD_LIMIT
+            )
+            x1 = parse_integer(
+                self.line_values["x1"].get(), "B x", -COORD_LIMIT, COORD_LIMIT
+            )
+            y1 = parse_integer(
+                self.line_values["y1"].get(), "B y", -COORD_LIMIT, COORD_LIMIT
+            )
             return (x0, y0, x1, y1)
-        cx = parse_integer(self.circle_values["cx"].get(), "Центр x", -COORD_LIMIT, COORD_LIMIT)
-        cy = parse_integer(self.circle_values["cy"].get(), "Центр y", -COORD_LIMIT, COORD_LIMIT)
-        radius = parse_integer(self.circle_values["r"].get(), "Радиус", 0, RADIUS_LIMIT)
+        if mode == "curve":
+            x0 = parse_integer(
+                self.curve_values["x0"].get(), "P0 x", -COORD_LIMIT, COORD_LIMIT
+            )
+            y0 = parse_integer(
+                self.curve_values["y0"].get(), "P0 y", -COORD_LIMIT, COORD_LIMIT
+            )
+            x1 = parse_integer(
+                self.curve_values["x1"].get(), "P1 x", -COORD_LIMIT, COORD_LIMIT
+            )
+            y1 = parse_integer(
+                self.curve_values["y1"].get(), "P1 y", -COORD_LIMIT, COORD_LIMIT
+            )
+            x2 = parse_integer(
+                self.curve_values["x2"].get(), "P2 x", -COORD_LIMIT, COORD_LIMIT
+            )
+            y2 = parse_integer(
+                self.curve_values["y2"].get(), "P2 y", -COORD_LIMIT, COORD_LIMIT
+            )
+            return (x0, y0, x1, y1, x2, y2)
+        cx = parse_integer(
+            self.circle_values["cx"].get(), "Центр x", -COORD_LIMIT, COORD_LIMIT
+        )
+        cy = parse_integer(
+            self.circle_values["cy"].get(), "Центр y", -COORD_LIMIT, COORD_LIMIT
+        )
+        radius = parse_integer(
+            self.circle_values["r"].get(), "Радиус", 0, RADIUS_LIMIT
+        )
         return (cx, cy, radius)
 
     def _calculate(self, data):
@@ -361,6 +525,11 @@ class RasterLabApp(object):
                 "ЦДА": raster_dda(x0, y0, x1, y1),
                 "Брезенхем": raster_bresenham(x0, y0, x1, y1),
             }
+        if self.mode.get() == "curve":
+          x0, y0, x1, y1, x2, y2 = data
+          return {
+              "Кастл — Питвей": raster_castle_pitway(x0, y0, x1, y1, x2, y2)
+          }
         cx, cy, radius = data
         return {"Брезенхем (окружность)": raster_circle(cx, cy, radius)}
 
@@ -383,6 +552,8 @@ class RasterLabApp(object):
 
     def _visible_algorithms(self):
         if self.current_mode == "circle":
+            return list(self.current_sets.keys())
+        if self.current_mode == "curve":
             return list(self.current_sets.keys())
         selected = self.algorithm.get()
         if selected == ALL_ALGORITHMS:
@@ -562,6 +733,8 @@ class RasterLabApp(object):
         self._draw_pixels(sx, sy, scale)
         self.canvas.create_rectangle(left, top, right, bottom, outline="#cbd3df", width=1)
 
+        self._draw_freehand_line(sx, sy)
+
     def _draw_pixels(self, sx, sy, scale):
         algorithms = self._visible_algorithms()
         if not algorithms:
@@ -617,6 +790,8 @@ class RasterLabApp(object):
                 ("ЦДА", raster_dda),
                 ("Брезенхем", raster_bresenham),
             )
+        elif self.mode.get() == "curve":
+            algorithms = (("Кастл — Питвей", raster_castle_pitway),)
         else:
             algorithms = (("Брезенхем (окружность)", raster_circle),)
         for item in self.stats.get_children():

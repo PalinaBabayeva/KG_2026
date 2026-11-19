@@ -6,7 +6,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-APP_TITLE = "Алгоритмы отсечения (Вариант 1)"
+APP_TITLE = "Алгоритмы отсечения"
 COORD_LIMIT = 10000.0
 MAX_SEGMENTS = 1000
 MAX_VERTICES = 100
@@ -298,68 +298,81 @@ def parse_polygon_text(text):
     return polygon
 
 
+def _parse_poly_lines(block_lines):
+  vertices = []
+  for raw in block_lines:
+    for part in raw.split(";"):
+      part = part.strip()
+      if not part:
+        continue
+      tokens = part.replace(",", " ").split()
+      if len(tokens) % 2 != 0:
+        raise ValueError("В строке многоугольника должно быть чётное число координат (пары x y)")
+      for idx in range(0, len(tokens), 2):
+        vertices.append((
+            _finite_number(tokens[idx], "x вершины"),
+            _finite_number(tokens[idx + 1], "y вершины"),
+        ))
+        if len(vertices) > MAX_VERTICES:
+          raise ValueError("Допускается не более %d вершин" % MAX_VERTICES)
+  poly, _ = normalize_convex_polygon(vertices)
+  return poly
+
+
 def read_input_file(path, mode):
-    with open(path, "r", encoding="utf-8-sig") as stream:
-        lines = [line.split("#", 1)[0].strip() for line in stream]
-    lines = [line for line in lines if line]
-    if not lines:
-        raise ValueError("Файл пуст")
-    if mode == "rect":
-        try:
-            count = int(lines[0])
-        except ValueError:
-            raise ValueError("Первая строка должна содержать число отрезков")
-        if count < 1 or count > MAX_SEGMENTS:
-            raise ValueError("Число отрезков должно быть от 1 до %d" % MAX_SEGMENTS)
-        if len(lines) != count + 2:
-            raise ValueError("Ожидались %d строк отрезков и 1 строка окна xmin ymin xmax ymax" % count)
-        segments = []
-        for index in range(count):
-            tokens = lines[index + 1].replace(",", " ").split()
-            if len(tokens) != 4:
-                raise ValueError("Строка %d: ожидались четыре координаты отрезка" % (index + 2))
-            segments.append(tuple(_finite_number(token, "координата отрезка") for token in tokens))
-        tokens = lines[-1].replace(",", " ").split()
-        if len(tokens) != 4:
-            raise ValueError("Последняя строка должна содержать xmin ymin xmax ymax")
-        rect = validate_rectangle(tuple(_finite_number(token, "координата окна") for token in tokens))
-        return tuple(segments), rect
+  with open(path, "r", encoding="utf-8-sig") as stream:
+    raw_lines = [line.split("#", 1)[0].strip() for line in stream]
 
-    if mode == "polygon":
-        idx = 0
-        try:
-            n_subj = int(lines[idx])
-        except ValueError:
-            raise ValueError("Первая строка должна содержать число вершин отсекаемого многоугольника")
-        idx += 1
-        if n_subj < 3 or n_subj > MAX_VERTICES or len(lines) < idx + n_subj + 1:
-            raise ValueError("Некорректное число вершин отсекаемого многоугольника")
-        subj_verts = []
-        for i in range(n_subj):
-            tokens = lines[idx + i].replace(",", " ").split()
-            if len(tokens) != 2:
-                raise ValueError("Строка %d: ожидались x и y вершины" % (idx + i + 1))
-            subj_verts.append(tuple(_finite_number(t, "координата") for t in tokens))
-        idx += n_subj
-        try:
-            n_clip = int(lines[idx])
-        except ValueError:
-            raise ValueError("Укажите число вершин отсекающего многоугольника")
-        idx += 1
-        if n_clip < 3 or n_clip > MAX_VERTICES or len(lines) != idx + n_clip:
-            raise ValueError("Некорректное число вершин отсекающего многоугольника")
-        clip_verts = []
-        for i in range(n_clip):
-            tokens = lines[idx + i].replace(",", " ").split()
-            if len(tokens) != 2:
-                raise ValueError("Строка %d: ожидались x и y вершины" % (idx + i + 1))
-            clip_verts.append(tuple(_finite_number(t, "координата") for t in tokens))
-        subj_poly, _ = normalize_convex_polygon(subj_verts)
-        clip_poly, _ = normalize_convex_polygon(clip_verts)
-        return subj_poly, clip_poly
+  if mode == "rect":
+    lines = [line for line in raw_lines if line]
+    if len(lines) < 2:
+      raise ValueError("В файле должны быть хотя бы один отрезок и последняя строка окна (xmin ymin xmax ymax)")
+    if len(lines) - 1 > MAX_SEGMENTS:
+      raise ValueError("Допускается не более %d отрезков" % MAX_SEGMENTS)
 
-    raise ValueError("Неизвестный режим отсечения")
+    segments = []
+    for idx, line in enumerate(lines[:-1], 1):
+      tokens = line.replace(",", " ").replace(";", " ").split()
+      if len(tokens) != 4:
+        raise ValueError("Строка %d: ожидались 4 координаты отрезка (x1 y1 x2 y2)" % idx)
+      segments.append(tuple(_finite_number(t, "координата отрезка") for t in tokens))
 
+    rect_tokens = lines[-1].replace(",", " ").replace(";", " ").split()
+    if len(rect_tokens) != 4:
+      raise ValueError("Последняя строка: ожидались 4 координаты окна (xmin ymin xmax ymax)")
+    rect = validate_rectangle(tuple(_finite_number(t, "координата окна") for t in rect_tokens))
+    return tuple(segments), rect
+
+  if mode == "polygon":
+    blocks = []
+    current = []
+    for line in raw_lines:
+      if not line:
+        if current:
+          blocks.append(current)
+          current = []
+      else:
+        current.append(line)
+    if current:
+      blocks.append(current)
+
+    if len(blocks) == 2:
+      subj_poly = _parse_poly_lines(blocks[0])
+      clip_poly = _parse_poly_lines(blocks[1])
+      return subj_poly, clip_poly
+
+    non_empty = [line for line in raw_lines if line]
+    if len(non_empty) == 2:
+      subj_poly = _parse_poly_lines([non_empty[0]])
+      clip_poly = _parse_poly_lines([non_empty[1]])
+      return subj_poly, clip_poly
+
+    raise ValueError(
+        "Для многоугольников разделите вершины первого и второго многоугольников пустой строкой "
+        "(или запишите каждый многоугольник в отдельной строке)"
+    )
+
+  raise ValueError("Неизвестный режим отсечения")
 
 def run_benchmarks():
     rng = random.Random(271828)
@@ -480,12 +493,21 @@ class ClippingApp:
         style.configure("Panel.TFrame", background="#ffffff")
         style.configure("TLabel", background="#f3f5f8", foreground="#202938")
         style.configure("Panel.TLabel", background="#ffffff", foreground="#202938")
-        style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"), background="#ffffff", foreground="#172033")
-        style.configure("Sub.TLabel", font=("Segoe UI", 9), background="#ffffff", foreground="#64748b")
+        style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"),
+                        background="#ffffff", foreground="#172033")
+        style.configure("Sub.TLabel", font=("Segoe UI", 9),
+                        background="#ffffff", foreground="#64748b")
+        try:
+            style.configure("Error.TLabel", font=("Segoe UI", 9, "bold"),
+                            background="#ffffff", foreground="#dc2626")
+        except tk.TclError:
+            pass
         style.configure("TButton", padding=(9, 6))
-        style.configure("Accent.TButton", padding=(10, 7), font=("Segoe UI", 10, "bold"))
+        style.configure("Accent.TButton", padding=(10, 7),
+                        font=("Segoe UI", 10, "bold"))
         style.configure("TLabelframe", background="#ffffff")
-        style.configure("TLabelframe.Label", background="#ffffff", foreground="#475569", font=("Segoe UI", 9, "bold"))
+        style.configure("TLabelframe.Label", background="#ffffff",
+                        foreground="#475569", font=("Segoe UI", 9, "bold"))
         style.configure("TRadiobutton", background="#ffffff")
 
     def _build_ui(self):
@@ -507,8 +529,8 @@ class ClippingApp:
 
         mode_box = ttk.LabelFrame(left, text="Алгоритм", padding=8)
         mode_box.pack(fill=tk.X, pady=(0, 9))
-        ttk.Radiobutton(mode_box, text="Ч.1: Сазерленд—Коэн (отрезки)", value="rect", variable=self.mode, command=self._mode_changed).pack(anchor="w", pady=2)
-        ttk.Radiobutton(mode_box, text="Ч.2: Сазерленд—Ходжмен (многоугольник)", value="polygon", variable=self.mode, command=self._mode_changed).pack(anchor="w", pady=2)
+        ttk.Radiobutton(mode_box, text="Сазерленд—Коэн (отрезки)", value="rect", variable=self.mode, command=self._mode_changed).pack(anchor="w", pady=2)
+        ttk.Radiobutton(mode_box, text="Сазерленд—Ходжмен (многоугольник)", value="polygon", variable=self.mode, command=self._mode_changed).pack(anchor="w", pady=2)
 
         self.part1_frame = ttk.Frame(left, style="Panel.TFrame")
         self.part1_frame.pack(fill=tk.BOTH, expand=True)
@@ -553,8 +575,10 @@ class ClippingApp:
         self.run_btn.pack(fill=tk.X)
 
         self.stats_var = tk.StringVar(value="Ожидание расчёта")
-        ttk.Label(left, textvariable=self.stats_var, style="Sub.TLabel", wraplength=340, justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
-
+        self.stats_label = ttk.Label(left, textvariable=self.stats_var,
+                                    style="Sub.TLabel", wraplength=340,
+                                    justify=tk.LEFT)
+        self.stats_label.pack(anchor="w", pady=(10, 0))
         header = ttk.Frame(right, style="Panel.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(0, weight=1)
@@ -601,7 +625,7 @@ class ClippingApp:
         else:
             self.part1_frame.pack_forget()
             self.part2_frame.pack(fill=tk.BOTH, expand=True, before=actions_widget)
-        self.run_clipping(fit=True)
+        self.run_clipping(fit=True, silent=True)
 
     def reset_defaults(self):
         self.mode.set("rect")
@@ -616,7 +640,7 @@ class ClippingApp:
         self._mode_changed()
         self.fit_view()
 
-    def run_clipping(self, fit=False):
+    def run_clipping(self, fit=False, silent=False):
         mode = self.mode.get()
         try:
             if mode == "rect":
@@ -662,12 +686,15 @@ class ClippingApp:
                 self.stats_var.set("Сазерленд—Ходжмен · Исходных вершин: %d · Отсекающих: %d · Итоговых вершин: %d · Время: %.2f мкс" %
                                    (len(subj_poly), len(clip_poly), len(poly_result), elapsed_us))
         except ValueError as error:
-            self.stats_var.set(str(error))
-            self.current_results = []
-            self.current_poly_result = ()
+            self.stats_var.set(
+                "Ошибка: %s" % error
+            )
+            self.stats_label.configure(style="Error.TLabel")
+            if not silent:
+                messagebox.showerror("Ошибка ввода данных", str(error))
             self.draw()
             return
-
+        self.stats_label.configure(style="Sub.TLabel")
         self.draw(fit=fit)
 
     def load_file(self):
@@ -698,24 +725,48 @@ class ClippingApp:
         if self.current_mode == "polygon" and not self.current_poly_result:
             messagebox.showwarning("Нет результата", "Видимая область многоугольника пуста или не рассчитана")
             return
-        path = filedialog.asksaveasfilename(title="Сохранить результат отсечения", defaultextension=".txt", filetypes=(("Текстовые файлы", "*.txt"),))
+
+        path = filedialog.asksaveasfilename(
+            title="Сохранить результат отсечения",
+            defaultextension=".txt",
+            filetypes=(("Текстовые файлы", "*.txt"),),
+        )
         if not path:
             return
-        if self.current_mode == "rect":
-            lines = ["# Видимые части отрезков (Сазерленд — Коэн)", "# x1 y1 x2 y2"]
-            for result in self.current_results:
-                if result is not None:
-                    lines.append(" ".join(_fmt(v) for v in (result[0][0], result[0][1], result[1][0], result[1][1])))
-        else:
-            lines = ["# Вершины отсечённого многоугольника (Сазерленд — Ходжмен)", str(len(self.current_poly_result))]
-            for pt in self.current_poly_result:
-                lines.append("%s %s" % (_fmt(pt[0]), _fmt(pt[1])))
+
         try:
             with open(path, "w", encoding="utf-8") as stream:
-                stream.write("\n".join(lines) + "\n")
+                if self.current_mode == "rect":
+                    for seg in self.current_segments:
+                        stream.write(" ".join(_fmt(v) for v in seg) + "\n")
+                    xmin, ymin, xmax, ymax = self.current_clip
+                    stream.write(" ".join(_fmt(v) for v in (xmin, ymin, xmax, ymax)) + "\n")
+                    stream.write("\n# Видимые части отрезков:\n")
+                    for result in self.current_results:
+                        if result is not None:
+                            stream.write("# " + " ".join(
+                                _fmt(v) for v in (result[0][0], result[0][1],
+                                                result[1][0], result[1][1])
+                            ) + "\n")
+                else:
+                    stream.write("; ".join(
+                        "%s,%s" % (_fmt(p[0]), _fmt(p[1]))
+                        for p in self.current_subject_poly
+                    ) + "\n\n")
+                    stream.write("; ".join(
+                        "%s,%s" % (_fmt(p[0]), _fmt(p[1]))
+                        for p in self.current_clip
+                    ) + "\n")
+                    if self.current_poly_result:
+                        stream.write("\n# Результат отсечения:\n# ")
+                        stream.write("; ".join(
+                            "%s,%s" % (_fmt(p[0]), _fmt(p[1]))
+                            for p in self.current_poly_result
+                        ) + "\n")
         except OSError as error:
             messagebox.showerror("Ошибка сохранения", str(error))
             return
+
         self.stats_var.set(self.stats_var.get() + " · Сохранено")
 
     def _world_bounds(self):

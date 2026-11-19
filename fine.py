@@ -171,22 +171,6 @@ def color_faces(face_types: np.ndarray, texture: np.ndarray) -> np.ndarray:
     return colors
 
 
-def parse_vertices(source: str) -> np.ndarray:
-    rows: list[list[float]] = []
-    column_counts: set[int] = set()
-    for line_number, raw_line in enumerate(source.splitlines(), start=1):
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        parts = [p for p in line.replace(",", " ").replace(";", " ").split() if p]
-        if len(parts) not in (3, 4):
-            raise ValueError(f"Строка {line_number}: нужно 3 или 4 числа, получено {len(parts)}.")
-        values = [float(p) for p in parts]
-        if not np.all(np.isfinite(values)):
-            raise ValueError(f"Строка {line_number}: NaN/Inf не допускаются.")
-        column_counts.add(len(values))
-        rows.append(values)
-
     if not rows:
         raise ValueError("В тексте нет ни одной строки с координатами.")
     if len(column_counts) != 1:
@@ -284,8 +268,6 @@ class Text3DApp:
         self.vertex_count_label = ttk.Label(panel, text=f"Вершин: {len(self.vertices)}")
         self.vertex_count_label.pack(anchor="w", pady=(0, 4))
         
-        ttk.Button(panel, text="Редактор вершин…", command=self.edit_vertices).pack(fill="x", pady=(0, 7))
-
         buttons = ttk.Frame(panel, style="Panel.TFrame")
         buttons.pack(fill="x", pady=(9, 0))
         ttk.Button(buttons, text="Сбросить", command=self.reset).pack(side="left", fill="x", expand=True, padx=(0, 4))
@@ -490,12 +472,10 @@ class Text3DApp:
             content = Path(path).read_text(encoding="utf-8")
             data = json.loads(content)
             
-            # Текстура
             if "texture" in data and data["texture"] in TEXTURES:
                 self.texture_name.set(data["texture"])
                 self.change_texture()
 
-            # Ползунки
             if "sliders" in data:
                 for k, val in data["sliders"].items():
                     if k in self.vars:
@@ -505,13 +485,11 @@ class Text3DApp:
                         if k in self.values:
                             self.values[k].configure(text=f"{val:.{digits}f}{suffix}")
             
-            # Глубина
             if "depth" in data:
                 d = float(data["depth"])
                 self.depth.set(d)
                 self.depth_label.configure(text=f"Глубина: {d:.2f}")
 
-            # Геометрия
             if "vertices" in data:
                 self.vertices = np.array(data["vertices"], dtype=float)
             if "faces" in data:
@@ -527,68 +505,6 @@ class Text3DApp:
             self.status.configure(text=f"Проект загружен: {Path(path).name}")
         except Exception as exc:
             messagebox.showerror("Ошибка загрузки", str(exc))
-
-    def edit_vertices(self) -> None:
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Редактор вершин")
-        dialog.geometry("850x650")
-        dialog.minsize(600, 400)
-        dialog.configure(bg="#FFFFFF")
-        dialog.transient(self.root)
-
-        outer = ttk.Frame(dialog, style="Panel.TFrame", padding=12)
-        outer.pack(fill="both", expand=True)
-
-        ttk.Label(outer, text="Каждая строка: X Y Z W", style="Section.TLabel").pack(anchor="w", pady=(0, 6))
-
-        editor_frame = ttk.Frame(outer, style="Panel.TFrame")
-        editor_frame.pack(fill="both", expand=True)
-        
-        editor = tk.Text(
-            editor_frame, wrap="none", undo=True,
-            font=("Consolas", 10), bg="#FFFFFF", fg="#212121",
-            insertbackground="#000000", relief="flat", padx=8, pady=8,
-            highlightthickness=1, highlightbackground="#E0E0E0",
-        )
-        y_scroll = ttk.Scrollbar(editor_frame, orient="vertical", command=editor.yview)
-        x_scroll = ttk.Scrollbar(editor_frame, orient="horizontal", command=editor.xview)
-        editor.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-        
-        editor.grid(row=0, column=0, sticky="nsew")
-        y_scroll.grid(row=0, column=1, sticky="ns")
-        x_scroll.grid(row=1, column=0, sticky="ew")
-        editor_frame.rowconfigure(0, weight=1)
-        editor_frame.columnconfigure(0, weight=1)
-
-        editor.insert("1.0", "\n".join(" ".join(f"{v:.6f}" for v in row) for row in self.vertices))
-
-        actions = ttk.Frame(outer, style="Panel.TFrame")
-        actions.pack(fill="x", pady=(10, 0))
-
-        def apply_new_vertices() -> None:
-            try:
-                new_v = parse_vertices(editor.get("1.0", "end-1c"))
-            except Exception as exc:
-                messagebox.showerror("Ошибка формата", str(exc), parent=dialog)
-                return
-            self.vertices = new_v
-            
-            if len(new_v) == len(self.initial_vertices):
-                self.faces = self.initial_faces.copy()
-                self.face_types = self.initial_face_types.copy()
-                self.face_colors = color_faces(self.face_types, self.texture)
-                self.collection.set_facecolor(self.face_colors)
-            else:
-                self.faces = np.empty((0, 4), dtype=int)
-                self.face_types = np.empty((0, 3), dtype=object)
-
-            self.vertex_count_label.configure(text=f"Вершин: {len(self.vertices)}")
-            self.update_model()
-            dialog.destroy()
-
-        ttk.Button(actions, text="Применить", command=apply_new_vertices).pack(side="right")
-        ttk.Button(actions, text="Отмена", command=dialog.destroy).pack(side="right", padx=(0, 6))
-        dialog.grab_set()
 
 
 def main() -> None:
